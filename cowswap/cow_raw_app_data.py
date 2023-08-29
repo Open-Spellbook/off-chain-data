@@ -1,7 +1,12 @@
 import os
 import json
 import requests
+import time  # import the time module
 from google.cloud import bigquery
+
+# Record start time for the entire script
+script_start_time = time.time()
+
 
 # Initialize BigQuery client
 credential_path = "../keys/blocktrekker-admin.json"
@@ -9,6 +14,7 @@ os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
 client = bigquery.Client()
 
 def create_table():
+    start_time = time.time()  # Record the start time for create_table
     dataset_id = 'cowswap'
     table_id = 'raw_app_data'
 
@@ -71,10 +77,16 @@ def create_table():
     table = bigquery.Table(table_ref, schema=schema)
     client.create_table(table)
 
+    end_time = time.time()  # Record the end time for create_table
+    return end_time - start_time  # Return the elapsed time
 
 def fetch_and_insert_into_bigquery(hash_list):
+    start_time = time.time()  # Record the start time for fetch_and_insert_into_bigquery
+
     base_url = "https://api.cow.fi/mainnet/api/v1/app_data/"
     rows_to_insert = []
+    fail_count = 0
+
     
     for hash_entry in hash_list:
         hash_value = hash_entry['hash']
@@ -98,9 +110,11 @@ def fetch_and_insert_into_bigquery(hash_list):
                 }
                 
                 rows_to_insert.append(row)
+                print(f"Successfully fetched data for hash {hash_value}. count = {len(rows_to_insert)}")
                 
             else:
-                print(f"Failed to fetch data for hash {hash_value}. Status code: {response.status_code}")
+                fail_count += 1
+                print(f"Fail count: {fail_count} Failed to fetch data for hash {hash_value}. Status code: {response.status_code}")
                 
         except Exception as e:
             print(f"An error occurred: {e}")
@@ -115,13 +129,22 @@ def fetch_and_insert_into_bigquery(hash_list):
         else:
             print(f"Row successfully inserted: {row}")
 
-if __name__ == "__main__":
-    create_table()
+    end_time = time.time()  # Record the end time for fetch_and_insert_into_bigquery
+    return end_time - start_time  # Return the elapsed time
 
-    sql_query = "SELECT trades, call_block_number FROM gnosis_protocol_v2_ethereum.GPv2Settlement_call_settle"
+if __name__ == "__main__":
+    # Record start time for SQL query
+    query_start_time = time.time()
+    
+    create_table_time = create_table()
+    
+    sql_query = "SELECT trades, call_block_number FROM gnosis_protocol_v2_ethereum.GPv2Settlement_call_settle WHERE call_success = True"
     query_job = client.query(sql_query)
     
-    hash_list = []
+    # Record end time for SQL query
+    query_end_time = time.time()
+    
+    hash_dict = {}  # Store hash and the earliest first_seen_block
     count = 0
     for row in query_job:
         trades_ = row.trades
@@ -131,10 +154,23 @@ if __name__ == "__main__":
             app_data_hash = trade.split(',')
             
             if len(app_data_hash) > 6:
-                if app_data_hash[6] != "0x0000000000000000000000000000000000000000000000000000000000000001":
-                    hash_entry = {"hash": app_data_hash[6], "first_seen_block": call_block_number}
-                    hash_list.append(hash_entry)
-                    count += 1
-                    print(count)
+                hash_value = app_data_hash[6]
+                if hash_value != "0x0000000000000000000000000000000000000000000000000000000000000001":
+                    # Update first_seen_block only if it's smaller than the existing one
+                    if hash_value not in hash_dict or call_block_number < hash_dict[hash_value]:
+                        hash_dict[hash_value] = call_block_number
+                        print(count)
+                        count += 1
 
-    fetch_and_insert_into_bigquery(hash_list)
+    hash_list = [{"hash": k, "first_seen_block": v} for k, v in hash_dict.items()]
+    
+    fetch_and_insert_time = fetch_and_insert_into_bigquery(hash_list)
+    
+    # Record end time for the entire script
+    script_end_time = time.time()
+
+    # Print out the time taken for each stage
+    print(f"Time taken for create_table: {create_table_time} seconds")
+    print(f"Time taken for SQL query: {query_end_time - query_start_time} seconds")
+    print(f"Time taken for fetch_and_insert_into_bigquery: {fetch_and_insert_time} seconds")
+    print(f"Total script time: {script_end_time - script_start_time} seconds")

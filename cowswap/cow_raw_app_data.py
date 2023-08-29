@@ -135,8 +135,6 @@ if __name__ == "__main__":
                     hash_entry = {"hash": app_data_hash[6], "first_seen_block": call_block_number}
                     hash_list.append(hash_entry)
                     count += 1
-        
-        if count > 10:
-            break
+                    print(count)
 
     fetch_and_insert_into_bigquery(hash_list)
